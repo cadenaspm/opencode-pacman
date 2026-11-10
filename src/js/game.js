@@ -38,6 +38,7 @@ function createGame() {
     score: 0,
     lives: 3,
     dotsRemaining: dots,
+    phase: { name: 'scatter', framesLeft: 420 }, // ciclo scatter/chase
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -174,13 +175,16 @@ function chooseStep( choices, g, target ) {
 // sin media vuelta. Sin salida (callejon): permitir el giro de 180.
 function decideGhost( game, g ) {
   const grid = game.grid;
+  // En scatter todos van a su esquina; en chase cada kind a lo suyo.
+  const scatter = game.phase.name === 'scatter';
+  const target = scatter ? SCATTER_TARGETS[ g.kind ] : chaseTarget( game, g );
 
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
   );
   const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
-  g.dir = chooseStep( choices, g, chaseTarget( game, g ) );
+  g.dir = chooseStep( choices, g, target );
 }
 
 function moveGhost( game, g ) {
@@ -217,7 +221,20 @@ function collides( a, b ) {
   return Math.abs( a.x - b.x ) < 0.5 && Math.abs( a.y - b.y ) < 0.5;
 }
 
+// Avanza el ciclo scatter/chase: 420 frames de scatter alternados con 1200
+// de chase, indefinidamente. En cada cambio de fase los 4 fantasmas invierten
+// su direccion en ese frame (reversa forzada, como en el arcade).
+function tickPhase( game ) {
+  game.phase.framesLeft--;
+  if ( game.phase.framesLeft > 0 ) return;
+
+  if ( game.phase.name === 'scatter' ) game.phase = { name: 'chase', framesLeft: 1200 };
+  else game.phase = { name: 'scatter', framesLeft: 420 };
+  game.ghosts.forEach( ( g ) => { g.dir = OPPOSITE[ g.dir ]; } );
+}
+
 function update( game ) {
+  tickPhase( game );
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
