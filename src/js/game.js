@@ -27,6 +27,8 @@ const SCATTER_TARGETS = {
 // frames de espera por fantasma (turnos 0 / 90 / 180 / 270, ~1,5 s entre ellos).
 const EXIT_TARGET = { x: 13, y: 11 };
 const EXIT_STAGGER_FRAMES = 90;
+const POWER_POINTS = 50; // puntos por pellet grande (los dots valen 10)
+const ROAM_VISIBLE_FRAMES = 180; // 3 s de vida del pellet movil antes de saltar
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -35,8 +37,9 @@ function createGame() {
   // La celda de inicio de Pacman arranca sin dot.
   grid[ PACMAN_START.y ][ PACMAN_START.x ] = 0;
 
+  // Dots y pellets grandes cuentan ambos para la victoria (SPEC 03).
   let dots = 0;
-  for ( const row of grid ) for ( const v of row ) if ( v === 2 ) dots++;
+  for ( const row of grid ) for ( const v of row ) if ( v === 2 || v === 4 ) dots++;
 
   return {
     state: 'start',
@@ -44,6 +47,8 @@ function createGame() {
     lives: 3,
     dotsRemaining: dots,
     phase: { name: 'scatter', framesLeft: 420 }, // ciclo scatter/chase
+    // Pellet movil: casilla al azar (nunca sobre Pac-Man) y timer de 3 s.
+    roam: { ...pickRoamCell( grid, [ { x: PACMAN_START.x, y: PACMAN_START.y } ] ), framesLeft: ROAM_VISIBLE_FRAMES },
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -62,6 +67,22 @@ function createGame() {
       exitDelay: i * EXIT_STAGGER_FRAMES,  // frames de espera antes de su turno
     } ) ),
   };
+}
+
+// El pellet movil puede caer en cualquier celda transitable fuera de muros,
+// puerta y pen; nunca en las celdas de la lista avoid (Pac-Man, la actual).
+function pickRoamCell( grid, avoid ) {
+  const candidates = [];
+  for ( let y = 0; y < grid.length; y++ ) {
+    for ( let x = 0; x < grid[ 0 ].length; x++ ) {
+      const v = grid[ y ][ x ];
+      if ( v === 1 || v === 3 ) continue;         // muro o puerta de la pen
+      if ( x >= 11 && x <= 16 && y >= 12 && y <= 15 ) continue; // pen
+      if ( avoid.some( ( c ) => c.x === x && c.y === y ) ) continue;
+      candidates.push( { x, y } );
+    }
+  }
+  return candidates[ Math.floor( Math.random() * candidates.length ) ];
 }
 
 function aligned( v ) {
@@ -116,10 +137,14 @@ function movePacman( game ) {
       p.dir = p.nextDir;
       p.nextDir = null;
     }
-    // Comer dot.
+    // Comer dot (10) o pellet grande (50); ambos cuentan para ganar.
     if ( grid[ p.y ][ p.x ] === 2 ) {
       grid[ p.y ][ p.x ] = 0;
       game.score += 10;
+      game.dotsRemaining--;
+    } else if ( grid[ p.y ][ p.x ] === 4 ) {
+      grid[ p.y ][ p.x ] = 0;
+      game.score += POWER_POINTS;
       game.dotsRemaining--;
     }
     // Si no puede seguir, se detiene en la celda.
@@ -263,10 +288,33 @@ function tickPhase( game ) {
   game.ghosts.forEach( ( g ) => { if ( !g.home ) g.dir = OPPOSITE[ g.dir ]; } );
 }
 
+// Ciclo del pellet movil: visible ROAM_VISIBLE_FRAMES frames (3 s) y al
+// cumplirse reaparece al instante en otra casilla distinta. Comerlo suma
+// POWER_POINTS y lo elimina de la partida (roam = null, no reaparece).
+function tickRoam( game ) {
+  const r = game.roam;
+  if ( !r ) return;
+  if ( collides( game.pacman, r ) ) {
+    game.score += POWER_POINTS;
+    game.roam = null;
+    return;
+  }
+  r.framesLeft--;
+  if ( r.framesLeft > 0 ) return;
+  // Reubicacion: se evita la casilla de donde salta y la de Pac-Man.
+  const old = { x: r.x, y: r.y };
+  const pac = { x: Math.round( game.pacman.x ), y: Math.round( game.pacman.y ) };
+  const cell = pickRoamCell( game.grid, [ old, pac ] );
+  r.x = cell.x;
+  r.y = cell.y;
+  r.framesLeft = ROAM_VISIBLE_FRAMES;
+}
+
 function update( game ) {
   tickPhase( game );
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
+  tickRoam( game );
 
   for ( const g of game.ghosts ) {
     if ( collides( game.pacman, g ) ) {
