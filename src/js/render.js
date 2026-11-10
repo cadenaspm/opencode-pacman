@@ -6,6 +6,9 @@ const WALL_COLOR = '#2121ff';
 const DOOR_COLOR = '#ffb8ff';
 const DOT_COLOR = '#ffb897';
 const PELLET_RADIUS = 6.5; // radio de los pellets grandes (fijos y movil)
+const FRIGHTENED_COLOR = '#2121de'; // cuerpo azul del fantasma asustado
+const FLASH_COLOR = '#f8f8f8';      // flash blanco del aviso final
+const FLASH_START_FRAMES = 120;     // ultimos 2 s del modo, donde parpadea
 
 function cellCenter( x, y ) {
   return { cx: x * TILE + TILE / 2, cy: y * TILE + TILE / 2 };
@@ -113,7 +116,16 @@ function drawPacman( ctx, p, frame ) {
   ctx.fill();
 }
 
-function drawGhost( ctx, g, color ) {
+// Color del cuerpo segun estado: color propio por kind si esta normal; azul
+// mientras asustado, alternando con blanco en los ultimos 2 s del modo.
+function ghostBodyColor( g, game, frame ) {
+  if ( !g.scared ) return GHOST_COLOR[ g.kind ] || '#ff0000';
+  const flashing =
+    game.frightened <= FLASH_START_FRAMES && Math.floor( frame / 5 ) % 2 === 0;
+  return flashing ? FLASH_COLOR : FRIGHTENED_COLOR;
+}
+
+function drawGhost( ctx, g, game, frame ) {
   const { cx, cy } = cellCenter( g.x, g.y );
   const r = TILE / 2 - 1;
   const top = cy - r;
@@ -121,7 +133,7 @@ function drawGhost( ctx, g, color ) {
   const left = cx - r;
   const right = cx + r;
 
-  ctx.fillStyle = color;
+  ctx.fillStyle = ghostBodyColor( g, game, frame );
   ctx.beginPath();
   ctx.arc( cx, cy - 1, r, Math.PI, 0, false ); // cabeza
   ctx.lineTo( right, bottom );
@@ -179,7 +191,7 @@ function draw( ctx, game, frame ) {
   drawDots( ctx, grid );
   drawRoam( ctx, game );
   drawPacman( ctx, game.pacman, frame );
-  game.ghosts.forEach( ( g ) => drawGhost( ctx, g, GHOST_COLOR[ g.kind ] || '#ff0000' ) );
+  game.ghosts.forEach( ( g ) => drawGhost( ctx, g, game, frame ) );
   drawHUD( ctx, game, W );
 }
 
