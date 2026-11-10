@@ -12,6 +12,16 @@ const OPPOSITE = { left: 'right', right: 'left', up: 'down', down: 'up' };
 
 const PACMAN_SPEED = 0.125; // 1/8 celda/frame -> alinea cada 8 frames
 const GHOST_SPEED = 0.1;    // 1/10 celda/frame
+const GHOST_SPEEDS = { hunter: 1 / 9 }; // velocidad por kind; fallback: GHOST_SPEED
+
+// Esquinas de scatter por kind. Son casillas del borde (no transitables):
+// solo fijan el rumbo greedy, no hay que alcanzarlas.
+const SCATTER_TARGETS = {
+  hunter:   { x: 26, y: 0 },
+  ambusher: { x: 1,  y: 0 },
+  flanker:  { x: 26, y: 30 },
+  shy:      { x: 1,  y: 30 },
+};
 
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
@@ -28,6 +38,7 @@ function createGame() {
     score: 0,
     lives: 3,
     dotsRemaining: dots,
+    phase: { name: 'scatter', framesLeft: 420 }, // ciclo scatter/chase
     grid,
     pacman: {
       x: PACMAN_START.x,
@@ -40,7 +51,7 @@ function createGame() {
       x: g.x,
       y: g.y,
       dir: 'up',
-      speed: GHOST_SPEED,
+      speed: GHOST_SPEEDS[ g.kind ] || GHOST_SPEED,
       kind: g.kind,
     } ) ),
   };
@@ -110,35 +121,70 @@ function movePacman( game ) {
   wrapTunnel( p, width );
 }
 
+// Casilla objetivo en chase segun el kind del fantasma:
+//   hunter:   la casilla de Pac-Man (persecucion agresiva).
+//   ambusher: 4 casillas delante de Pac-Man en su direccion actual.
+//   flanker:  el espejo de Pac-Man respecto al hunter (lo flanquea).
+//   shy:      persigue a Pac-Man si esta lejos (> 8 casillas); si esta cerca
+//             se repliega a su esquina de scatter.
+function chaseTarget( game, g ) {
+  const p = game.pacman;
+  const px = Math.round( p.x );
+  const py = Math.round( p.y );
+
+  if ( g.kind === 'hunter' ) return { x: px, y: py };
+
+  if ( g.kind === 'shy' ) {
+    const dist = Math.abs( Math.round( g.x ) - px ) + Math.abs( Math.round( g.y ) - py );
+    if ( dist <= 8 ) return SCATTER_TARGETS.shy;
+    return { x: px, y: py };
+  }
+
+  const d = DIRS[ p.dir ];
+  if ( g.kind === 'ambusher' ) return { x: px + d.x * 4, y: py + d.y * 4 };
+
+  // flanker: espejo = 2 * (pacman + 2 * dirPacman) - hunter.
+  const mid = { x: px + d.x * 2, y: py + d.y * 2 };
+  const h = game.ghosts.find( ( other ) => other.kind === 'hunter' ) || g;
+  return {
+    x: mid.x + ( mid.x - Math.round( h.x ) ),
+    y: mid.y + ( mid.y - Math.round( h.y ) ),
+  };
+}
+
+// Elige la opcion que mas acerca a g hacia su objetivo (distancia Manhattan).
+// Desempate conservado del motor original: gana el primer minimo, en el
+// orden de DIRS (left, right, up, down).
+function chooseStep( choices, g, target ) {
+  let best = choices[ 0 ];
+  let bestDist = Infinity;
+  for ( const dir of choices ) {
+    const d = DIRS[ dir ];
+    const nx = g.x + d.x;
+    const ny = g.y + d.y;
+    const dist = Math.abs( nx - target.x ) + Math.abs( ny - target.y );
+    if ( dist < bestDist ) {
+      bestDist = dist;
+      best = dir;
+    }
+  }
+  return best;
+}
+
+// Decision de direccion en cada celda alineada. Opciones = salidas validas
+// sin media vuelta. Sin salida (callejon): permitir el giro de 180.
 function decideGhost( game, g ) {
   const grid = game.grid;
-  const p = game.pacman;
+  // En scatter todos van a su esquina; en chase cada kind a lo suyo.
+  const scatter = game.phase.name === 'scatter';
+  const target = scatter ? SCATTER_TARGETS[ g.kind ] : chaseTarget( game, g );
 
   const options = Object.keys( DIRS ).filter(
     ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
   );
-  // Sin salida (callejon): permitir el giro de 180.
-  const choices = options.length ? options : [ '' + OPPOSITE[ g.dir ] ];
+  const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
-  if ( g.kind === 'hunter' ) {
-    const px = Math.round( p.x );
-    const py = Math.round( p.y );
-    let best = choices[ 0 ];
-    let bestDist = Infinity;
-    for ( const dir of choices ) {
-      const d = DIRS[ dir ];
-      const nx = g.x + d.x;
-      const ny = g.y + d.y;
-      const dist = Math.abs( nx - px ) + Math.abs( ny - py );
-      if ( dist < bestDist ) {
-        bestDist = dist;
-        best = dir;
-      }
-    }
-    g.dir = best;
-  } else {
-    g.dir = choices[ Math.floor( Math.random() * choices.length ) ];
-  }
+  g.dir = chooseStep( choices, g, target );
 }
 
 function moveGhost( game, g ) {
@@ -175,7 +221,20 @@ function collides( a, b ) {
   return Math.abs( a.x - b.x ) < 0.5 && Math.abs( a.y - b.y ) < 0.5;
 }
 
+// Avanza el ciclo scatter/chase: 420 frames de scatter alternados con 1200
+// de chase, indefinidamente. En cada cambio de fase los 4 fantasmas invierten
+// su direccion en ese frame (reversa forzada, como en el arcade).
+function tickPhase( game ) {
+  game.phase.framesLeft--;
+  if ( game.phase.framesLeft > 0 ) return;
+
+  if ( game.phase.name === 'scatter' ) game.phase = { name: 'chase', framesLeft: 1200 };
+  else game.phase = { name: 'scatter', framesLeft: 420 };
+  game.ghosts.forEach( ( g ) => { g.dir = OPPOSITE[ g.dir ]; } );
+}
+
 function update( game ) {
+  tickPhase( game );
   movePacman( game );
   game.ghosts.forEach( ( g ) => moveGhost( game, g ) );
 
