@@ -69,26 +69,30 @@ function aligned( v ) {
 }
 
 // Una celda es muro para el actor dado?
-//   pacman: bloqueado por pared (1) y puerta (3)
-//   ghost:  bloqueado solo por pared (1)
-function isWall( grid, x, y, actor ) {
+//   pacman: bloqueado por pared (1) y puerta (3), siempre.
+//   ghost:  bloqueado por pared (1); la puerta (3) solo es transitable si
+//           le pasamos allowDoor, unicamente durante su salida de la pen.
+//           Asi la puerta queda de un solo sentido: entrar, jamas.
+function isWall( grid, x, y, actor, allowDoor ) {
   if ( y < 0 || y >= grid.length ) return true;
   if ( x < 0 || x >= grid[ 0 ].length ) return true;
   const v = grid[ y ][ x ];
   if ( v === 1 ) return true;
-  if ( v === 3 && actor === 'pacman' ) return true;
+  if ( v === 3 && actor === 'ghost' && allowDoor === true ) return false;
+  if ( v === 3 ) return true;
   return false;
 }
 
-// Puede el actor avanzar desde (x,y) en la direccion dir?
-function canMove( grid, x, y, dir, actor ) {
+// Puede el actor avanzar desde (x,y) en la direccion dir? El flag allowDoor
+// solo se usa con fantasma en salida de la pen: omitirlo bloquea la puerta.
+function canMove( grid, x, y, dir, actor, allowDoor ) {
   const d = DIRS[ dir ];
   if ( !d ) return false;
   const tx = x + d.x;
   const ty = y + d.y;
   // Tunel: salir por un borde en la fila del tunel siempre es valido.
   if ( ty === TUNNEL_ROW && ( tx < 0 || tx >= grid[ 0 ].length ) ) return true;
-  return !isWall( grid, tx, ty, actor );
+  return !isWall( grid, tx, ty, actor, allowDoor );
 }
 
 function wrapTunnel( a, width ) {
@@ -182,12 +186,16 @@ function chooseStep( choices, g, target ) {
 // sin media vuelta. Sin salida (callejon): permitir el giro de 180.
 function decideGhost( game, g ) {
   const grid = game.grid;
-  // En scatter todos van a su esquina; en chase cada kind a lo suyo.
-  const scatter = game.phase.name === 'scatter';
-  const target = scatter ? SCATTER_TARGETS[ g.kind ] : chaseTarget( game, g );
+  // Mientras el fantasma este en casa (con su turno ya liberado) su unica
+  // meta es la casilla libre sobre la puerta; fuera reina scatter/chase.
+  const target = g.home
+    ? EXIT_TARGET
+    : game.phase.name === 'scatter'
+      ? SCATTER_TARGETS[ g.kind ]
+      : chaseTarget( game, g );
 
   const options = Object.keys( DIRS ).filter(
-    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost' )
+    ( dir ) => dir !== OPPOSITE[ g.dir ] && canMove( grid, g.x, g.y, dir, 'ghost', g.home )
   );
   const choices = options.length ? options : [ OPPOSITE[ g.dir ] ];
 
@@ -207,8 +215,11 @@ function moveGhost( game, g ) {
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
     g.y = Math.round( g.y );
+    // Salida completada: alineado en el plano y <= 11 ya esta fuera de la
+    // puerta y deja de estar en casa (los pasos de 0.1 no caen exactos).
+    if ( g.home && g.y <= 11 ) g.home = false;
     decideGhost( game, g );
-    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost' ) ) return;
+    if ( !canMove( grid, g.x, g.y, g.dir, 'ghost', g.home ) ) return;
   }
 
   const d = DIRS[ g.dir ];
@@ -217,6 +228,8 @@ function moveGhost( game, g ) {
   wrapTunnel( g, width );
 }
 
+// Tras perder una vida: Pac-Man y los 4 fantasmas reaparecen en sus celdas de
+// inicio y los fantasmas repiten la salida escalonada desde cero.
 function resetPositions( game ) {
   const p = game.pacman;
   p.x = PACMAN_START.x;
@@ -227,6 +240,8 @@ function resetPositions( game ) {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
+    g.home = true;
+    g.exitDelay = i * EXIT_STAGGER_FRAMES;
   } );
 }
 
@@ -243,7 +258,9 @@ function tickPhase( game ) {
 
   if ( game.phase.name === 'scatter' ) game.phase = { name: 'chase', framesLeft: 1200 };
   else game.phase = { name: 'scatter', framesLeft: 420 };
-  game.ghosts.forEach( ( g ) => { g.dir = OPPOSITE[ g.dir ]; } );
+  // La reversa forzada solo toca a los fantasmas fuera de la pen: los que
+  // siguen en casa no dan media vuelta durante su espera o salida.
+  game.ghosts.forEach( ( g ) => { if ( !g.home ) g.dir = OPPOSITE[ g.dir ]; } );
 }
 
 function update( game ) {
