@@ -23,6 +23,11 @@ const SCATTER_TARGETS = {
   shy:      { x: 1,  y: 30 },
 };
 
+// Turnos de salida de la pen: punto de referencia fuera de la puerta y
+// frames de espera por fantasma (turnos 0 / 90 / 180 / 270, ~1,5 s entre ellos).
+const EXIT_TARGET = { x: 13, y: 11 };
+const EXIT_STAGGER_FRAMES = 90;
+
 // Crea una partida nueva. Copia MAZE (pristino) a game.grid para poder comer
 // dots sin destruir el original, y reiniciar.
 function createGame() {
@@ -47,12 +52,14 @@ function createGame() {
       nextDir: null,
       speed: PACMAN_SPEED,
     },
-    ghosts: GHOST_STARTS.map( ( g ) => ( {
+    ghosts: GHOST_STARTS.map( ( g, i ) => ( {
       x: g.x,
       y: g.y,
       dir: 'up',
       speed: GHOST_SPEEDS[ g.kind ] || GHOST_SPEED,
       kind: g.kind,
+      home: true,                          // dentro de la pen / subiendo por la puerta
+      exitDelay: i * EXIT_STAGGER_FRAMES,  // frames de espera antes de su turno
     } ) ),
   };
 }
@@ -190,6 +197,12 @@ function decideGhost( game, g ) {
 function moveGhost( game, g ) {
   const grid = game.grid;
   const width = grid[ 0 ].length;
+
+  // Turno de salida pendiente: se queda quieto hasta que le toque moverse.
+  if ( g.home && g.exitDelay > 0 ) {
+    g.exitDelay--;
+    return;
+  }
 
   if ( aligned( g.x ) && aligned( g.y ) ) {
     g.x = Math.round( g.x );
