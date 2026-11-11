@@ -5,6 +5,10 @@ const TILE = 20;
 const WALL_COLOR = '#2121ff';
 const DOOR_COLOR = '#ffb8ff';
 const DOT_COLOR = '#ffb897';
+const PELLET_RADIUS = 6.5; // radio de los pellets grandes (fijos y movil)
+const FRIGHTENED_COLOR = '#2121de'; // cuerpo azul del fantasma asustado
+const FLASH_COLOR = '#f8f8f8';      // flash blanco del aviso final
+const FLASH_START_FRAMES = 120;     // ultimos 2 s del modo, donde parpadea
 
 function cellCenter( x, y ) {
   return { cx: x * TILE + TILE / 2, cy: y * TILE + TILE / 2 };
@@ -66,17 +70,31 @@ function drawDoor( ctx, grid ) {
   ctx.stroke();
 }
 
+// Dots pequenos (2) y pellets grandes (4), nuevo valor del maze en SPEC 03.
 function drawDots( ctx, grid ) {
   ctx.fillStyle = DOT_COLOR;
   for ( let y = 0; y < grid.length; y++ ) {
     for ( let x = 0; x < grid[ 0 ].length; x++ ) {
-      if ( grid[ y ][ x ] !== 2 ) continue;
+      const v = grid[ y ][ x ];
+      if ( v !== 2 && v !== 4 ) continue;
       const { cx, cy } = cellCenter( x, y );
       ctx.beginPath();
-      ctx.arc( cx, cy, 2.5, 0, Math.PI * 2 );
+      // El pellet grande destaca: radio 6.5 frente al 2.5 del dot.
+      ctx.arc( cx, cy, v === 4 ? PELLET_RADIUS : 2.5, 0, Math.PI * 2 );
       ctx.fill();
     }
   }
+}
+
+// Pellet movil: misma pieza y radio que los fijos; solo existe si roam no
+// es null (una vez comido desaparece para siempre en esta partida).
+function drawRoam( ctx, game ) {
+  if ( !game.roam ) return;
+  const { cx, cy } = cellCenter( game.roam.x, game.roam.y );
+  ctx.fillStyle = DOT_COLOR;
+  ctx.beginPath();
+  ctx.arc( cx, cy, PELLET_RADIUS, 0, Math.PI * 2 );
+  ctx.fill();
 }
 
 function drawPacman( ctx, p, frame ) {
@@ -98,27 +116,18 @@ function drawPacman( ctx, p, frame ) {
   ctx.fill();
 }
 
-function drawGhost( ctx, g, color ) {
-  const { cx, cy } = cellCenter( g.x, g.y );
-  const r = TILE / 2 - 1;
-  const top = cy - r;
-  const bottom = cy + r;
-  const left = cx - r;
-  const right = cx + r;
+// Color del cuerpo segun estado: color propio por kind si esta normal; azul
+// mientras asustado, alternando con blanco en los ultimos 2 s del modo.
+function ghostBodyColor( g, game, frame ) {
+  if ( !g.scared ) return GHOST_COLOR[ g.kind ] || '#ff0000';
+  const flashing =
+    game.frightened <= FLASH_START_FRAMES && Math.floor( frame / 5 ) % 2 === 0;
+  return flashing ? FLASH_COLOR : FRIGHTENED_COLOR;
+}
 
-  ctx.fillStyle = color;
-  ctx.beginPath();
-  ctx.arc( cx, cy - 1, r, Math.PI, 0, false ); // cabeza
-  ctx.lineTo( right, bottom );
-  // falda ondulada (3 picos)
-  ctx.lineTo( right - r * 0.66, bottom - 4 );
-  ctx.lineTo( cx, bottom );
-  ctx.lineTo( left + r * 0.66, bottom - 4 );
-  ctx.lineTo( left, bottom );
-  ctx.closePath();
-  ctx.fill();
-
-  // ojos mirando segun direccion
+// Par de ojos del fantasma mirando segun su direccion. Lo comparten el
+// fantasma completo y el reducido a ojos tras ser comido (SPEC 03).
+function drawGhostEyes( ctx, g, cx, cy ) {
   const dir = DIRS[ g.dir ] || { x: 0, y: 0 };
   const ex = dir.x * 1.6;
   const ey = dir.y * 1.6;
@@ -132,6 +141,36 @@ function drawGhost( ctx, g, color ) {
     ctx.arc( cx + off + ex, cy - 1 + ey, 1.5, 0, Math.PI * 2 );
     ctx.fill();
   }
+}
+
+function drawGhost( ctx, g, game, frame ) {
+  const { cx, cy } = cellCenter( g.x, g.y );
+  const r = TILE / 2 - 1;
+
+  // Fantasma comido: solo quedan los ojos regresando al pen.
+  if ( g.eyes ) {
+    drawGhostEyes( ctx, g, cx, cy );
+    return;
+  }
+
+  const bottom = cy + r;
+  const left = cx - r;
+  const right = cx + r;
+
+  ctx.fillStyle = ghostBodyColor( g, game, frame );
+  ctx.beginPath();
+  ctx.arc( cx, cy - 1, r, Math.PI, 0, false ); // cabeza
+  ctx.lineTo( right, bottom );
+  // falda ondulada (3 picos)
+  ctx.lineTo( right - r * 0.66, bottom - 4 );
+  ctx.lineTo( cx, bottom );
+  ctx.lineTo( left + r * 0.66, bottom - 4 );
+  ctx.lineTo( left, bottom );
+  ctx.closePath();
+  ctx.fill();
+
+  // ojos mirando segun direccion
+  drawGhostEyes( ctx, g, cx, cy );
 }
 
 function drawHUD( ctx, game, W ) {
@@ -162,8 +201,9 @@ function draw( ctx, game, frame ) {
   drawWalls( ctx, grid );
   drawDoor( ctx, grid );
   drawDots( ctx, grid );
+  drawRoam( ctx, game );
   drawPacman( ctx, game.pacman, frame );
-  game.ghosts.forEach( ( g ) => drawGhost( ctx, g, GHOST_COLOR[ g.kind ] || '#ff0000' ) );
+  game.ghosts.forEach( ( g ) => drawGhost( ctx, g, game, frame ) );
   drawHUD( ctx, game, W );
 }
 
