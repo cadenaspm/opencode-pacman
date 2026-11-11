@@ -362,21 +362,38 @@ function moveGhost( game, g ) {
   wrapTunnel( g, width );
 }
 
-// Tras perder una vida: Pac-Man y los 4 fantasmas reaparecen en sus celdas de
-// inicio y los fantasmas repiten la salida escalonada desde cero.
+// Tras perder una vida: reset arcade (SPEC 03). Pac-Man y los 4 fantasmas
+// reaparecen en sus celdas de inicio y los fantasmas repiten la salida
+// escalonada desde cero. El modo asustado se cancela (frightened = 0 y flags
+// scared/eyes limpios) y el pellet movil, si sigue vivo en la partida, se
+// reubica en otra casilla con un ciclo nuevo de 3 s. El grid no se toca: los
+// pellets fijos comidos siguen comidos y el movil comido nunca vuelve.
 function resetPositions( game ) {
   const p = game.pacman;
   p.x = PACMAN_START.x;
   p.y = PACMAN_START.y;
   p.dir = 'left';
   p.nextDir = null;
+  game.frightened = 0;
   game.ghosts.forEach( ( g, i ) => {
     g.x = GHOST_STARTS[ i ].x;
     g.y = GHOST_STARTS[ i ].y;
     g.dir = 'up';
     g.home = true;
     g.exitDelay = i * EXIT_STAGGER_FRAMES;
+    g.scared = false;
+    g.eyes = false;
   } );
+  // Reubicar el movil solo si sigue vivo: salta a otra casilla (nunca la que
+  // tenia ni la de Pac-Man reaparecido) y arranca un ciclo nuevo de 3 s.
+  if ( game.roam ) {
+    const old = { x: game.roam.x, y: game.roam.y };
+    const pac = { x: PACMAN_START.x, y: PACMAN_START.y };
+    const cell = pickRoamCell( game.grid, [ old, pac ] );
+    game.roam.x = cell.x;
+    game.roam.y = cell.y;
+    game.roam.framesLeft = ROAM_VISIBLE_FRAMES;
+  }
 }
 
 function collides( a, b ) {
